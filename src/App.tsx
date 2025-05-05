@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Map } from './components/Map';
+import { GoogleMap } from './components/GoogleMap';
+import { MapWrapper } from './components/MapWrapper';
+import { MapProviderWrapper } from './contexts/MapContext';
 
 export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -60,55 +62,94 @@ export default function App() {
   }, [stream]);
 
   const defaultLocation: [number, number] = [40.7580, -73.9855];
+  const [activeTab, setActiveTab] = useState('controls');
+
+  // Add effect to handle automatic map switching
+  useEffect(() => {
+    if (isGuidanceActive) {
+      setActiveTab('map');
+    }
+  }, [isGuidanceActive]);
 
   return (
-    <div className="h-screen w-screen bg-black text-white overflow-hidden">
-      <div className="flex h-screen">
-        {/* 左侧按钮区域 */}
-        <div className="w-1/4 p-4 space-y-6 overflow-y-auto">
-          <button
-            className="w-full p-4 bg-blue-600 rounded-lg text-xl font-bold focus:ring-4 focus:ring-blue-400"
-            onClick={toggleStream}
-            aria-pressed={isStreaming}
-          >
-            {isStreaming ? "停止实时流" : "开始实时流"}
-          </button>
-
-          <button
-            className="w-full p-4 bg-green-600 rounded-lg text-xl font-bold focus:ring-4 focus:ring-green-400"
-            onClick={() => setIsGuidanceActive(!isGuidanceActive)}
-            aria-pressed={isGuidanceActive}
-          >
-            {isGuidanceActive ? "关闭导航模式" : "启用导航模式"}
-          </button>
-
+    <MapProviderWrapper>
+      <div className="h-screen w-screen bg-black text-white overflow-hidden">
+        {/* Main content area */}
+        <div className="h-[calc(100vh-4rem)] relative">
+          {/* Control panel view */}
           <div 
-            role="status" 
-            aria-live="polite"
-            className="p-4 bg-gray-800 rounded-lg"
+            className={`absolute inset-0 p-4 space-y-4 overflow-y-auto transform transition-transform duration-300 ease-in-out bg-black ${
+              activeTab === 'controls' ? 'translate-x-0' : '-translate-x-full'
+            }`}
+            style={{ backfaceVisibility: 'hidden' }}
           >
-            {isStreaming && <p>摄像头已连接</p>}
-            {isStreaming && <p>实时流正在运行</p>}
-            {isGuidanceActive && <p>导航模式已激活</p>}
+            <button
+              className="w-full min-h-[3.5rem] p-4 bg-blue-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-blue-400 active:bg-blue-700 transition-colors touch-manipulation"
+              onClick={toggleStream}
+              aria-pressed={isStreaming}
+            >
+              {isStreaming ? "停止实时流" : "开始实时流"}
+            </button>
+
+            <button
+              className="w-full min-h-[3.5rem] p-4 bg-green-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-green-400 active:bg-green-700 transition-colors touch-manipulation"
+              onClick={() => setIsGuidanceActive(!isGuidanceActive)}
+              aria-pressed={isGuidanceActive}
+            >
+              {isGuidanceActive ? "关闭导航模式" : "启用导航模式"}
+            </button>
+
+            <div 
+              role="status" 
+              aria-live="polite"
+              className="p-4 bg-gray-800 rounded-lg"
+            >
+              {isStreaming && <p>摄像头已连接</p>}
+              {isStreaming && <p>实时流正在运行</p>}
+              {isGuidanceActive && <p>导航模式已激活</p>}
+            </div>
+
+            <button
+              className="w-full min-h-[3.5rem] p-4 bg-purple-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-purple-400 active:bg-purple-700 transition-colors touch-manipulation"
+              onClick={startVoiceInput}
+            >
+              <span role="img" aria-hidden="true">🎤</span> 语音输入目的地
+            </button>
           </div>
 
-          <button
-            className="w-full p-4 bg-purple-600 rounded-lg text-xl font-bold focus:ring-4 focus:ring-purple-400"
-            onClick={startVoiceInput}
+          {/* Map view */}
+          <div 
+            className={`absolute inset-0 transform transition-transform duration-300 ease-in-out ${
+              activeTab === 'map' ? 'translate-x-0' : 'translate-x-full'
+            }`}
+            style={{ backfaceVisibility: 'hidden' }}
           >
-            <span role="img" aria-hidden="true">🎤</span> 语音输入目的地
-          </button>
+            <MapWrapper 
+              center={defaultLocation}
+              zoom={15}
+              isVisible={activeTab === 'map'}
+            />
+          </div>
         </div>
 
-        {/* 右侧地图区域 */}
-        <div className="w-3/4 h-screen relative">
-          <Map 
-            center={defaultLocation}
-            zoom={15}
-            isVisible={true}
-          />
+        {/* Bottom navigation bar */}
+        <div className="fixed bottom-0 left-0 right-0 h-16 bg-gray-900 flex justify-around items-center shadow-lg">
+          <button
+            className={`flex-1 h-full flex items-center justify-center ${activeTab === 'controls' ? 'text-blue-500' : 'text-gray-400'}`}
+            onClick={() => setActiveTab('controls')}
+          >
+            <span className="text-2xl">🎛️</span>
+            <span className="ml-2">控制台</span>
+          </button>
+          <button
+            className={`flex-1 h-full flex items-center justify-center ${activeTab === 'map' ? 'text-blue-500' : 'text-gray-400'}`}
+            onClick={() => setActiveTab('map')}
+          >
+            <span className="text-2xl">🗺️</span>
+            <span className="ml-2">地图</span>
+          </button>
         </div>
       </div>
-    </div>
+    </MapProviderWrapper>
   );
 }

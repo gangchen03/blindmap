@@ -40,7 +40,11 @@ export const Map = ({ center, zoom, isVisible }: MapProps) => {
   return (
     <div 
       ref={mapRef} 
-      style={{ height: '100vh', width: '100%' }}
+      className="h-screen w-full touch-manipulation"
+      style={{
+        WebkitOverflowScrolling: 'touch',
+        touchAction: 'manipulation'
+      }}
       aria-hidden="true"
       role="presentation"
     />
