@@ -1,31 +1,101 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleMap } from './components/GoogleMap';
 import { MapWrapper } from './components/MapWrapper';
 import { MapProviderWrapper } from './contexts/MapContext';
+// Assuming gemini-live-api.js is in src/services and exports GeminiLiveApi class
+// Adjust the path and import name if necessary.
+import { GeminiLiveAPI, GeminiLiveResponseMessage } from './services/gemini-live-api';
 
 export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGuidanceActive, setIsGuidanceActive] = useState(false);
-  const [showMap, setShowMap] = useState(false);
+  // const [showMap, setShowMap] = useState(false); // showMap seems unused, consider removing
   const [stream, setStream] = useState<MediaStream | null>(null);
-  
-  // 摄像头控制
-  const toggleStream = async () => {
+  const [geminiApi, setGeminiApi] = useState<GeminiLiveAPI | null>(null);
+  const [isApiConnected, setIsApiConnected] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameCaptureIntervalRef = useRef<number | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null); // Ref to hold the current media stream
+  const geminiApiRef = useRef<GeminiLiveAPI | null>(null); // Ref for API instance for cleanup
+
+  const SYSTEM_INSTRUCTION_IMAGE_DESCRIPTION = "Please describe what you see in plain English";
+  const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second
+
+  // Initialize Gemini API instance
+  useEffect(() => {
     try {
-      if (!isStreaming) {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setStream(mediaStream);
-        setIsStreaming(true);
-      } else {
-        stream?.getTracks().forEach(track => track.stop());
-        setStream(null);
-        setIsStreaming(false);
-      }
+      // Replace with actual configuration for your GeminiLiveApi
+      // TODO: Replace these placeholder values with your actual configuration
+      const PROXY_URL = "ws://localhost:8080"; // Example: Your backend proxy to Gemini
+      const PROJECT_ID = "";
+      const MODEL_NAME = "gemini-2.0-flash-live-preview-04-09"; // Or your specific model, e.g., gemini-pro-vision
+      const API_HOST = "us-central1-aiplatform.googleapis.com"; // Or your specific region
+
+      const api = new GeminiLiveAPI(PROXY_URL, PROJECT_ID, MODEL_NAME, API_HOST);
+      api.systemInstructions = SYSTEM_INSTRUCTION_IMAGE_DESCRIPTION; // Set system instruction
+      setGeminiApi(api);
     } catch (error) {
-      console.error('摄像头访问错误:', error);
-      alert('无法访问摄像头，请确保已授予权限');
+      console.error("Failed to initialize GeminiLiveApi:", error);
+      alert("API initialization failed. Please check console.");
     }
-  };
+  }, []); // Empty dependency array means this runs once on mount
+
+  // Keep geminiApiRef updated
+  useEffect(() => {
+    geminiApiRef.current = geminiApi;
+  }, [geminiApi]);
+
+    // Main cleanup for the component unmount
+  useEffect(() => {
+    return () => {
+      if (frameCaptureIntervalRef.current) {
+        clearInterval(frameCaptureIntervalRef.current);
+      }
+      mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+      if (geminiApiRef.current?.webSocket && geminiApiRef.current.webSocket.readyState === WebSocket.OPEN) {
+        geminiApiRef.current.disconnect();
+      }
+    };
+  }, []); // Empty dependency array for unmount cleanup
+
+  // Effect to set up API callbacks when geminiApi instance is ready
+  useEffect(() => {
+    if (!geminiApi) return;
+
+    geminiApi.onConnectionStarted = () => {
+      console.log("Gemini API connected successfully.");
+      setIsApiConnected(true);
+    };
+
+    geminiApi.onReceiveResponse = (message: GeminiLiveResponseMessage) => {
+      console.log("Full Gemini Message Received:", message); // Logs the whole message object
+
+      if (message.type === "TEXT" && message.data) {
+        console.log("Gemini Text Response:", message.data); // Specifically logs the text data
+        // TODO: You could also update a state here to display this text in your UI
+        // alert(`Gemini: ${message.data}`);
+      }
+    };
+
+    geminiApi.onErrorMessage = (errorMsg: string) => {
+      console.error("Gemini API connection error:", errorMsg);
+      alert(`Gemini API Error: ${errorMsg}`);
+      setIsApiConnected(false);
+      setIsStreaming(false); // Stop streaming indication on API error
+      mediaStreamRef.current?.getTracks().forEach(track => track.stop()); // Stop camera
+      setStream(null);
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+
+    geminiApi.onDisconnected = () => {
+      console.log("Gemini API disconnected.");
+      setIsApiConnected(false);
+      // Consider if setIsStreaming(false) is needed here for unexpected disconnections
+    };
+
+  }, [geminiApi]); // Re-run if geminiApi instance changes
 
   // 语音输入控制
   const startVoiceInput = () => {
@@ -52,14 +122,98 @@ export default function App() {
     }
   };
 
-  // 清理摄像头资源
+  const captureAndSendFrame = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current || !geminiApi || !isApiConnected || !stream) {
+      return;
+    }
+    if (videoRef.current.readyState < videoRef.current.HAVE_METADATA || videoRef.current.videoWidth === 0) {
+      return;
+    }
+
+    const videoElement = videoRef.current;
+    const canvasElement = canvasRef.current;
+
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
+    const context = canvasElement.getContext('2d');
+    if (context) {
+      context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+      const dataUrl = canvasElement.toDataURL('image/jpeg', 0.8); // Use JPEG, 80% quality
+      const base64ImageData = dataUrl.split(',')[1]; // Extract base64 data
+
+      if (base64ImageData) {
+        geminiApi.sendImageMessage(base64ImageData, 'image/jpeg');
+        console.log("Attempting to send video frame to Gemini API"); // Added for debugging
+      }
+    }
+  }, [geminiApi, isApiConnected, stream]);
+
+  // Effect to manage frame capture interval and video element srcObject
   useEffect(() => {
+    if (isStreaming && isApiConnected && stream && videoRef.current) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(err => console.error("Error playing video:", err));
+      }
+      
+      if (frameCaptureIntervalRef.current) clearInterval(frameCaptureIntervalRef.current);
+      frameCaptureIntervalRef.current = window.setInterval(captureAndSendFrame, FRAME_CAPTURE_INTERVAL_MS);
+    } else {
+      if (frameCaptureIntervalRef.current) {
+        clearInterval(frameCaptureIntervalRef.current);
+        frameCaptureIntervalRef.current = null;
+      }
+    }
+    // Cleanup for this specific effect
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      if (frameCaptureIntervalRef.current) {
+        clearInterval(frameCaptureIntervalRef.current);
       }
     };
-  }, [stream]);
+  }, [isStreaming, isApiConnected, stream, captureAndSendFrame, FRAME_CAPTURE_INTERVAL_MS]);
+
+  // Combined function to toggle camera stream and API connection
+  const toggleStreamAndApi = async () => {
+    if (!geminiApi) {
+      alert("Gemini API is not initialized. Please wait or refresh.");
+      return;
+    }
+
+    if (!isStreaming) { // ---- START STREAMING ----
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        mediaStreamRef.current = mediaStream; // Store in ref
+        setStream(mediaStream); // Set stream state for video element
+        setIsStreaming(true); // Indicate user has initiated streaming
+
+        // Call connect. Callbacks on the geminiApi instance will handle state changes.
+        // You can pass an access token if your API requires it: geminiApi.connect(your_access_token);
+        geminiApi.connect();
+
+      } catch (error) { // This catch is for getUserMedia errors
+        console.error('摄像头访问错误:', error);
+        alert('无法访问摄像头，请确保已授予权限');
+        setIsStreaming(false); // Ensure states are reset
+        setIsApiConnected(false);
+        mediaStreamRef.current = null;
+        setStream(null);
+      }
+    } else { // ---- STOP STREAMING ----
+      if (frameCaptureIntervalRef.current) clearInterval(frameCaptureIntervalRef.current);
+      frameCaptureIntervalRef.current = null;
+
+      mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+      setStream(null);
+      if (videoRef.current) videoRef.current.srcObject = null;
+
+      if (geminiApi.webSocket && geminiApi.webSocket.readyState === WebSocket.OPEN) {
+        geminiApi.disconnect(() => console.log("Gemini API disconnected by user."));
+      }
+      setIsApiConnected(false); // Explicitly set on user stop
+      setIsStreaming(false);
+    }
+  };
 
   const defaultLocation: [number, number] = [40.7580, -73.9855];
   const [activeTab, setActiveTab] = useState('controls');
@@ -74,6 +228,10 @@ export default function App() {
   return (
     <MapProviderWrapper>
       <div className="h-screen w-screen bg-black text-white overflow-hidden">
+        {/* Hidden video and canvas elements for frame capture */}
+        <video ref={videoRef} style={{ display: 'none' }} playsInline muted></video>
+        <canvas ref={canvasRef} style={{ display: 'none' }}></canvas>
+
         {/* Main content area */}
         <div className="h-[calc(100vh-4rem)] relative">
           {/* Control panel view */}
@@ -85,8 +243,9 @@ export default function App() {
           >
             <button
               className="w-full min-h-[3.5rem] p-4 bg-blue-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-blue-400 active:bg-blue-700 transition-colors touch-manipulation"
-              onClick={toggleStream}
+              onClick={toggleStreamAndApi}
               aria-pressed={isStreaming}
+              disabled={!geminiApi} // Disable if API not ready
             >
               {isStreaming ? "停止实时流" : "开始实时流"}
             </button>
@@ -104,8 +263,10 @@ export default function App() {
               aria-live="polite"
               className="p-4 bg-gray-800 rounded-lg"
             >
-              {isStreaming && <p>摄像头已连接</p>}
-              {isStreaming && <p>实时流正在运行</p>}
+              {!geminiApi && <p>正在初始化 API...</p>}
+              {geminiApi && !isStreaming && <p>实时流已停止。点击开始。</p>}
+              {isStreaming && !isApiConnected && <p>摄像头已启动，正在连接 Gemini API...</p>}
+              {isStreaming && isApiConnected && <p>实时流已连接并正在发送至 Gemini。</p>}
               {isGuidanceActive && <p>导航模式已激活</p>}
             </div>
 
