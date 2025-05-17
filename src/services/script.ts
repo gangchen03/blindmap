@@ -93,6 +93,13 @@ const API_HOST: string = "us-central1-aiplatform.googleapis.com";
 const projectInput: { value: string } = { value: PROJECT_ID };
 const systemInstructionsInput: { value: string } = { value: prompt };
 
+// Video capture variables
+let videoElement: HTMLVideoElement | null = null;
+let canvasElement: HTMLCanvasElement | null = null;
+let videoStream: MediaStream | null = null;
+let frameCaptureInterval: number | null = null;
+const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second, matches App.tsx
+
 const micButton: HTMLButtonElement | null = document.getElementById("mic-button") as HTMLButtonElement | null;
 const micIcon: HTMLElement | null = micButton ? micButton.querySelector("i") : null;
 
@@ -115,6 +122,10 @@ const COMPLETION_TIMEOUT: number = 1000; // Timeout in milliseconds (1 second)
 
 window.addEventListener("load", (_event: Event): void => {
     console.log("Hello Gemini Realtime Demo!");
+
+    // Initialize video and canvas elements
+    videoElement = document.getElementById("cameraFeed") as HTMLVideoElement | null;
+    canvasElement = document.getElementById("frameCanvas") as HTMLCanvasElement | null;
 
     setAvailableCamerasOptions();
     setAvailableMicrophoneOptions();
@@ -237,7 +248,8 @@ function connectBtnClick(): void {
 
     geminiLiveApi.onConnectionStarted = (): void => {
         setAppStatus("connected");
-        startAudioInput();
+        // startAudioInput(); // Audio input will be started by initMicButtonClick logic
+        startVideoInput(); // Start video input when connected
         updateMicIcon("listening");
     };
 
@@ -268,6 +280,51 @@ geminiLiveApi.onReceiveResponse = (messageResponse: GeminiLiveResponseMessage): 
     }
 };
 
+function startVideoInput(): void {
+    if (!videoElement || !canvasElement) {
+        console.error("Video or canvas element not found for video input.");
+        return;
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true, audio: false }) // Request video only
+            .then((stream) => {
+                videoStream = stream;
+                if (videoElement) {
+                    videoElement.srcObject = stream;
+                    videoElement.play().catch(err => console.error("Error playing video:", err));
+                }
+                console.log("Camera access granted and video started.");
+
+                if (frameCaptureInterval) clearInterval(frameCaptureInterval);
+                frameCaptureInterval = window.setInterval(captureFrameAndSend, FRAME_CAPTURE_INTERVAL_MS);
+            })
+            .catch((err) => {
+                console.error("Error accessing camera: ", err);
+                showDialogWithMessage("Could not access the camera: " + err.message);
+            });
+    } else {
+        console.error("getUserMedia not supported on this browser.");
+        showDialogWithMessage("Camera access is not supported by your browser.");
+    }
+}
+
+function captureFrameAndSend(): void {
+    if (!videoStream || !videoElement || !canvasElement || !geminiLiveApi || (geminiLiveApi as any).webSocket?.readyState !== WebSocket.OPEN) {
+        return;
+    }
+    if (videoElement.readyState < videoElement.HAVE_METADATA || videoElement.videoWidth === 0) {
+        return;
+    }
+
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
+    const context = canvasElement.getContext('2d');
+    context?.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+    const dataUrl = canvasElement.toDataURL('image/jpeg', 0.8);
+    const base64ImageData = dataUrl.split(',')[1];
+    if (base64ImageData) geminiLiveApi.sendImageMessage(base64ImageData, 'image/jpeg');
+}
+
 const liveAudioInputManager = new LiveAudioInputManager();
 // Set the onDisconnected callback
 liveAudioInputManager.onDisconnected = (): void => {
@@ -275,6 +332,7 @@ liveAudioInputManager.onDisconnected = (): void => {
     geminiLiveApi.disconnect((): void => {
     console.log("Gemini Live API disconnected");
     updateMicIcon("microphone");
+    stopVideoInput(); // Stop video input when mic/Gemini disconnects
     clearTranscriptionText();
     });
 };
@@ -291,9 +349,21 @@ function stopAudioInput(): void {
     liveAudioInputManager.disconnectMicrophone();
 }
 
+function stopVideoInput(): void {
+    if (frameCaptureInterval) {
+        clearInterval(frameCaptureInterval);
+        frameCaptureInterval = null;
+    }
+    videoStream?.getTracks().forEach(track => track.stop());
+    videoStream = null;
+    if (videoElement) videoElement.srcObject = null;
+    console.log("Video input stopped.");
+}
+
 function disconnectBtnClick(): void {
     setAppStatus("disconnected");
     stopAudioInput();
+    stopVideoInput(); // Stop video input when explicitly disconnecting
     geminiLiveApi.disconnect((): void => {
         console.log("Gemini Live API disconnected");
     });

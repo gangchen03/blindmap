@@ -21,7 +21,8 @@ export default function App() {
   const geminiApiRef = useRef<GeminiLiveAPI | null>(null); // Ref for API instance for cleanup
 
   const SYSTEM_INSTRUCTION_IMAGE_DESCRIPTION = "Please describe what you see in plain English";
-  const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second
+  // const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second for video streaming
+  const FRAME_CAPTURE_INTERVAL_MS = 10000; // Testing sending a frame every 10 seconds
 
   // Initialize Gemini API instance
   useEffect(() => {
@@ -29,7 +30,8 @@ export default function App() {
       // Replace with actual configuration for your GeminiLiveApi
       // TODO: Replace these placeholder values with your actual configuration
       const PROXY_URL = "ws://localhost:8080"; // Example: Your backend proxy to Gemini
-      const PROJECT_ID = "";
+      const PROJECT_ID = "consumer-genai-experiments";
+      // const PROJECT_ID = "cloud-llm-preview1";
       const MODEL_NAME = "gemini-2.0-flash-live-preview-04-09"; // Or your specific model, e.g., gemini-pro-vision
       const API_HOST = "us-central1-aiplatform.googleapis.com"; // Or your specific region
 
@@ -143,6 +145,9 @@ export default function App() {
 
       if (base64ImageData) {
         geminiApi.sendImageMessage(base64ImageData, 'image/jpeg');
+
+        // Also send text message to prompt the Gemini
+        geminiApi.sendTextMessage("Please describe what you see in English");
         console.log("Attempting to send video frame to Gemini API"); // Added for debugging
       }
     }

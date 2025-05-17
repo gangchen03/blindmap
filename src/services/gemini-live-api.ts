@@ -109,6 +109,7 @@ export class GeminiLiveAPI {
     private accessToken: string | undefined;
     private webSocket: WebSocket | null;
     private isDisconnecting: boolean; // Flag to track if we are disconnecting
+    private isSessionSetupComplete: boolean; // Flag to track if session setup with server is complete
 
     constructor(proxyUrl: string, projectId: string, model: string, apiHost: string) {
         this.proxyUrl = proxyUrl;
@@ -136,6 +137,7 @@ export class GeminiLiveAPI {
         this.accessToken = undefined;
         this.webSocket = null;
         this.isDisconnecting = false;
+        this.isSessionSetupComplete = false;
 
         console.log("Created Gemini Live API object: ", this);
     }
@@ -154,6 +156,7 @@ export class GeminiLiveAPI {
         if (accessToken !== undefined) {
             this.setAccessToken(accessToken);
         }
+        this.isSessionSetupComplete = false; // Reset on new connection attempt
         this.setupWebSocketToService();
     }
 
@@ -168,6 +171,7 @@ export class GeminiLiveAPI {
                 if (onDisconnectedCallback) {
                     onDisconnectedCallback();
                 }
+                this.isSessionSetupComplete = false;
                 this.onDisconnected(); // Call the instance's onDisconnected callback
             };
             this.webSocket.close();
@@ -176,6 +180,7 @@ export class GeminiLiveAPI {
             if (onDisconnectedCallback) {
                 onDisconnectedCallback();
             }
+            this.isSessionSetupComplete = false;
             this.onDisconnected(); // Call the instance's onDisconnected callback
         }
     }
@@ -192,8 +197,21 @@ export class GeminiLiveAPI {
         console.log("Message received: ", messageEvent);
         try {
             const messageData = JSON.parse(messageEvent.data) as ServerMessageData;
-            const message = new GeminiLiveResponseMessage(messageData);
-            this.onReceiveResponse(message);
+            const parsedMessage = new GeminiLiveResponseMessage(messageData);
+
+            if (parsedMessage.type === "SETUP COMPLETE") {
+                console.log("Gemini Live API: Session setup complete message received.");
+                this.isSessionSetupComplete = true;
+                // Ensure socket is still open before calling onConnectionStarted
+                if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
+                    this.onConnectionStarted(); // Now signal that the connection and setup are truly ready
+                }
+            } else if (this.isSessionSetupComplete) {
+                // Only process other types of messages if session setup is complete
+                this.onReceiveResponse(parsedMessage);
+            } else {
+                console.warn("Gemini Live API: Received message before session setup was complete. Type:", parsedMessage.type, "Raw Data:", messageData);
+            }
         } catch (error) {
             console.error("Error parsing received message:", error, messageEvent.data);
             this.onErrorMessage("Error processing message from server.");
@@ -206,6 +224,7 @@ export class GeminiLiveAPI {
             return;
         }
         console.log("connecting: ", this.proxyUrl);
+        this.isSessionSetupComplete = false; // Reset on new WebSocket setup
         this.webSocket = new WebSocket(this.proxyUrl);
         console.log("web socket connection initiated");
 
@@ -228,7 +247,7 @@ export class GeminiLiveAPI {
         this.webSocket.onopen = (event) => {
             console.log("websocket open: ", event);
             this.sendInitialSetupMessages();
-            this.onConnectionStarted();
+            // this.onConnectionStarted(); // Moved: Will be called after "SETUP COMPLETE" message
         };
 
         this.webSocket.onmessage = this.onReceiveMessage.bind(this);

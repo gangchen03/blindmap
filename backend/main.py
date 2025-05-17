@@ -63,28 +63,64 @@ def get_access_token():
 
 
 async def proxy_task(
-    client_websocket: WebSocketCommonProtocol, server_websocket: WebSocketCommonProtocol
+    source_ws: WebSocketCommonProtocol, 
+    destination_ws: WebSocketCommonProtocol,
+    direction: str  # "client_to_server" or "server_to_client"
 ) -> None:
     """
     Forwards messages from one WebSocket connection to another.
 
     Args:
-        client_websocket: The WebSocket connection from which to receive messages.
-        server_websocket: The WebSocket connection to which to send messages.
+        source_ws: The WebSocket connection from which to receive messages.
+        destination_ws: The WebSocket connection to which to send messages.
+        direction: A string indicating the direction of data flow for logging.
     """
     try:
-        async for message in client_websocket:
+        async for message in source_ws:
+            if direction == "server_to_client":
+                # This is the print statement for messages from the Gemini API server
+                logging.info(f"GEMINI_API_RESPONSE: {message}")
+
             try:
-                data = json.loads(message)
+                # Ensure message is a string before json.loads or sending
+                message_str: str
+                if isinstance(message, bytes):
+                    message_str = message.decode('utf-8')
+                elif isinstance(message, str):
+                    message_str = message
+                else:
+                    logging.warning(
+                        f"Proxying ({direction}): Unexpected message type {type(message)}. Forwarding as is."
+                    )
+                    await destination_ws.send(message) # Forward original if not str or bytes
+                    continue
+
+                # Now message_str is guaranteed to be a string
+                data = json.loads(message_str)
+
                 if DEBUG:
-                    logging.info(f"proxying: {data}")
-                await server_websocket.send(json.dumps(data))
+                    # Log more descriptive info instead of hardcoded "image frame"
+                    if direction == "client_to_server" and \
+                       isinstance(data, dict) and \
+                       data.get("realtime_input", {}).get("media_chunks"):
+                        logging.info(f"Proxying ({direction}): Image Frame Data")
+                    else:
+                        logging.info(f"Proxying ({direction}): {data}")
+                
+                # It's generally safer to forward the original string message 
+                # to avoid any subtle changes from json.dumps(json.loads(message_str))
+                # unless you intend to modify the data.
+                await destination_ws.send(message_str)
+            except json.JSONDecodeError as jde:
+                logging.error(f"Proxying ({direction}): JSONDecodeError for message: '{message_str[:200]}...' Error: {jde}")
+                # If it was a string but not valid JSON, forward the original string.
+                await destination_ws.send(message_str)
             except Exception as e:
                 logging.error(f"Error processing message: {e}")
     except Exception as e:
         logging.error(f"Error in proxy_task: {e}")
     finally:
-        await server_websocket.close()
+        await destination_ws.close()
 
 
 async def create_proxy(client_websocket: WebSocketCommonProtocol) -> None:
@@ -113,10 +149,10 @@ async def create_proxy(client_websocket: WebSocketCommonProtocol) -> None:
         ) as server_websocket:
             logging.info("Connected to Gemini API")  # Debug message
             client_to_server_task = asyncio.create_task(
-                proxy_task(client_websocket, server_websocket)
+                proxy_task(client_websocket, server_websocket, "client_to_server")
             )
             server_to_client_task = asyncio.create_task(
-                proxy_task(server_websocket, client_websocket)
+                proxy_task(server_websocket, client_websocket, "server_to_client")
             )
             await asyncio.gather(client_to_server_task, server_to_client_task)
     except Exception as e:
