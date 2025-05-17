@@ -21,6 +21,8 @@ export default function App() {
   const geminiApiRef = useRef<GeminiLiveAPI | null>(null); // Ref for API instance for cleanup
 
   const SYSTEM_INSTRUCTION_IMAGE_DESCRIPTION = "Please describe what you see in plain English";
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   // const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second for video streaming
   const FRAME_CAPTURE_INTERVAL_MS = 10000; // Testing sending a frame every 10 seconds
 
@@ -37,6 +39,7 @@ export default function App() {
 
       const api = new GeminiLiveAPI(PROXY_URL, PROJECT_ID, MODEL_NAME, API_HOST);
       api.systemInstructions = SYSTEM_INSTRUCTION_IMAGE_DESCRIPTION; // Set system instruction
+      api.responseModalities = ["AUDIO"]; // Request AUDIO responses (or ["TEXT", "AUDIO"] if you want both)
       setGeminiApi(api);
     } catch (error) {
       console.error("Failed to initialize GeminiLiveApi:", error);
@@ -57,6 +60,11 @@ export default function App() {
       }
       mediaStreamRef.current?.getTracks().forEach(track => track.stop());
       if (geminiApiRef.current?.webSocket && geminiApiRef.current.webSocket.readyState === WebSocket.OPEN) {
+        // Clean up AudioWorkletNode and AudioContext
+        audioWorkletNodeRef.current?.disconnect();
+        audioWorkletNodeRef.current = null;
+        audioContextRef.current?.close().catch(err => console.error("Error closing AudioContext:", err));
+        audioContextRef.current = null;
         geminiApiRef.current.disconnect();
       }
     };
@@ -66,7 +74,7 @@ export default function App() {
   useEffect(() => {
     if (!geminiApi) return;
 
-    geminiApi.onConnectionStarted = () => {
+    geminiApi.onConnectionStarted = async () => { // Made async for initializeAudio
       console.log("Gemini API connected successfully.");
       setIsApiConnected(true);
     };
@@ -78,6 +86,8 @@ export default function App() {
         console.log("Gemini Text Response:", message.data); // Specifically logs the text data
         // TODO: You could also update a state here to display this text in your UI
         // alert(`Gemini: ${message.data}`);
+      } else if (message.type === "AUDIO" && message.data) {
+        playPcmAudio(message.data);
       }
     };
 
@@ -98,6 +108,70 @@ export default function App() {
     };
 
   }, [geminiApi]); // Re-run if geminiApi instance changes
+
+  const initializeAudioPlayback = useCallback(async () => {
+    if (audioContextRef.current && audioWorkletNodeRef.current) {
+      // Already initialized
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume().catch(err => console.error("Error resuming AudioContext:", err));
+      }
+      return;
+    }
+
+    console.log("Initializing AudioContext and Worklet...");
+    try {
+      const context = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      audioContextRef.current = context;
+
+      await context.audioWorklet.addModule('/pcm-processor.js'); // Path relative to public folder
+      const workletNode = new AudioWorkletNode(context, 'pcm-processor', {
+        processorOptions: { sampleRate: 24000 } // Pass sample rate to processor if needed
+      });
+      workletNode.connect(context.destination);
+      audioWorkletNodeRef.current = workletNode;
+
+      console.log("AudioContext and Worklet initialized successfully.");
+    } catch (error) {
+      console.error("Failed to initialize audio playback:", error);
+      // Fallback or error display
+    }
+  }, []);
+
+  const playPcmAudio = useCallback(async (base64PcmData: string) => {
+    if (!audioWorkletNodeRef.current || !audioContextRef.current) {
+      console.warn("AudioWorkletNode or AudioContext not initialized. Cannot play audio.");
+      return;
+    }
+    try {
+      // 1. Decode Base64 to ArrayBuffer
+      const binaryString = window.atob(base64PcmData);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const pcmArrayBuffer = bytes.buffer;
+
+      // 2. Convert ArrayBuffer (assuming 16-bit PCM) to Float32Array
+      // The DataView object is needed to correctly interpret little-endian 16-bit integers.
+      const dataView = new DataView(pcmArrayBuffer);
+      const numSamples = pcmArrayBuffer.byteLength / 2; // 2 bytes per 16-bit sample
+      const pcmFloat32Array = new Float32Array(numSamples);
+
+      for (let i = 0; i < numSamples; i++) {
+        // Read a 16-bit signed integer at byte offset i*2, as little-endian
+        const int16Sample = dataView.getInt16(i * 2, true); // true for little-endian
+        pcmFloat32Array[i] = int16Sample / 32768.0; // Normalize to -1.0 to 1.0
+      }
+
+      // Send the Float32Array to the AudioWorkletProcessor
+      if (pcmFloat32Array.length > 0) {
+        audioWorkletNodeRef.current.port.postMessage(pcmFloat32Array);
+      }
+    } catch (error) {
+      console.error("Error playing PCM audio:", error);
+    }
+  }, []); // audioContextRef will be stable via ref
 
   // 语音输入控制
   const startVoiceInput = () => {
@@ -190,6 +264,8 @@ export default function App() {
         mediaStreamRef.current = mediaStream; // Store in ref
         setStream(mediaStream); // Set stream state for video element
         setIsStreaming(true); // Indicate user has initiated streaming
+
+        await initializeAudioPlayback(); // Initialize or resume audio context and worklet
 
         // Call connect. Callbacks on the geminiApi instance will handle state changes.
         // You can pass an access token if your API requires it: geminiApi.connect(your_access_token);

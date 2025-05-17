@@ -116,7 +116,8 @@ export class GeminiLiveAPI {
         this.projectId = projectId;
         this.model = model;
         this.modelUri = `projects/${this.projectId}/locations/us-central1/publishers/google/models/${this.model}`;
-        this.responseModalities = ["TEXT"];
+        // this.responseModalities = ["TEXT"];
+        this.responseModalities = ["AUDIO"];
         this.systemInstructions = "";
         this.apiHost = apiHost;
         this.serviceUrl = `wss://${this.apiHost}/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`;
