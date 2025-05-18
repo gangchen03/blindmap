@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleMap } from './components/GoogleMap';
-import { MapWrapper } from './components/MapWrapper';
-import { MapProviderWrapper } from './contexts/MapContext';
+import { MapProviderWrapper, useMap } from './contexts/MapContext';
 // Assuming gemini-live-api.js is in src/services and exports GeminiLiveApi class
 // Adjust the path and import name if necessary.
 import { GeminiLiveAPI, GeminiLiveResponseMessage } from './services/gemini-live-api';
 
-export default function App() {
+// Define AppContent which will consume the map context
+function AppContent() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isGuidanceActive, setIsGuidanceActive] = useState(false);
-  // const [showMap, setShowMap] = useState(false); // showMap seems unused, consider removing
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [geminiApi, setGeminiApi] = useState<GeminiLiveAPI | null>(null);
   const [isApiConnected, setIsApiConnected] = useState(false);
@@ -25,6 +24,13 @@ export default function App() {
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   // const FRAME_CAPTURE_INTERVAL_MS = 1000; // Send one frame per second for video streaming
   const FRAME_CAPTURE_INTERVAL_MS = 10000; // Testing sending a frame every 10 seconds
+
+  const {
+    currentLocation, // Use from context
+    setDestination,
+    setDirectionsResult,
+    setIsNavigating: setContextIsNavigating // Renamed to avoid conflict
+  } = useMap();
 
   // Initialize Gemini API instance
   useEffect(() => {
@@ -172,28 +178,61 @@ export default function App() {
     }
   }, []); // audioContextRef will be stable via ref
 
-  // 语音输入控制
+  // Voice input control
   const startVoiceInput = () => {
+    if (!window.google || !window.google.maps || !window.google.maps.DirectionsService) {
+      alert("Google Maps API not loaded yet. Please try viewing the map first or try again shortly.");
+      return;
+    }
+
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
       const recognition = new SpeechRecognition();
       recognition.lang = 'en-US';
       recognition.continuous = false;
       recognition.interimResults = false;
+      console.log("Starting voice recognition...");
 
       recognition.onresult = (event) => {
-        const text = event.results[0][0].transcript;
-        alert(`set destination: ${text}`);
+        const destinationText = event.results[0][0].transcript;
+        console.log(`Destination recognized: ${destinationText}`);
+        // alert(`Heard: ${destinationText}. Getting directions...`);
+
+        const directionsService = new google.maps.DirectionsService();
+        const request: google.maps.DirectionsRequest = {
+          origin: { lat: currentLocation[0], lng: currentLocation[1] },
+          destination: destinationText,
+          travelMode: google.maps.TravelMode.DRIVING, // Or WALKING, BICYCLING
+        };
+
+        directionsService.route(request, (result, status) => {
+          if (status === google.maps.DirectionsStatus.OK && result) {
+            console.log("Directions received:", result);
+            setDirectionsResult(result);
+            if (result.routes[0] && result.routes[0].legs[0] && result.routes[0].legs[0].end_location) {
+              const endLocation = result.routes[0].legs[0].end_location;
+              setDestination([endLocation.lat(), endLocation.lng()]);
+            }
+            setIsGuidanceActive(true); // This will also trigger map tab switch via useEffect
+            setContextIsNavigating(true); // Update context
+            setActiveTab('map'); // Switch to map tab immediately
+            // alert("Route found! Check the map.");
+          } else {
+            console.error(`Directions request failed due to ${status}`);
+            alert(`Could not get directions for "${destinationText}". Error: ${status}`);
+            setDirectionsResult(null); // Clear any previous directions
+          }
+        });
       };
 
       recognition.onerror = (event) => {
-        console.error('speech recognition error:', event.error);
-        alert('speech recognition error, please try again.');
+        console.error('Speech recognition error:', event.error);
+        alert(`Speech recognition error: ${event.error}. Please try again.`);
       };
 
       recognition.start();
     } else {
-      alert('您的浏览器不支持语音识别');
+      alert('Your browser does not support speech recognition.');
     }
   };
 
@@ -295,18 +334,21 @@ export default function App() {
     }
   };
 
-  const defaultLocation: [number, number] = [40.7580, -73.9855];
   const [activeTab, setActiveTab] = useState('controls');
 
-  // Add effect to handle automatic map switching
+  // Effect to handle automatic map switching and sync context navigation state
   useEffect(() => {
     if (isGuidanceActive) {
       setActiveTab('map');
+      setContextIsNavigating(true);
+    } else {
+      // If guidance is stopped externally, ensure context is updated
+      setContextIsNavigating(false);
     }
   }, [isGuidanceActive]);
 
   return (
-    <MapProviderWrapper>
+    // This JSX was previously directly inside App's return, now it's in AppContent
       <div className="h-screen w-screen bg-black text-white overflow-hidden">
         {/* Hidden video and canvas elements for frame capture */}
         <video ref={videoRef} style={{ display: 'none' }} playsInline muted></video>
@@ -332,7 +374,14 @@ export default function App() {
 
             <button
               className="w-full min-h-[3.5rem] p-4 bg-green-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-green-400 active:bg-green-700 transition-colors touch-manipulation"
-              onClick={() => setIsGuidanceActive(!isGuidanceActive)}
+              onClick={() => {
+                const newGuidanceState = !isGuidanceActive;
+                setIsGuidanceActive(newGuidanceState);
+                if (!newGuidanceState) { // If stopping navigation
+                  setDirectionsResult(null); // Clear directions
+                  setDestination(null);
+                }
+              }}
               aria-pressed={isGuidanceActive}
             >
               {isGuidanceActive ? "Stop Navigation" : "Start Navigation"}
@@ -365,8 +414,8 @@ export default function App() {
             }`}
             style={{ backfaceVisibility: 'hidden' }}
           >
-            <MapWrapper 
-              center={defaultLocation}
+            <GoogleMap
+              center={currentLocation} // Use dynamic current location
               zoom={15}
               isVisible={activeTab === 'map'}
             />
@@ -391,6 +440,14 @@ export default function App() {
           </button>
         </div>
       </div>
+  );
+}
+
+// The main App component now sets up the provider
+export default function App() {
+  return (
+    <MapProviderWrapper>
+      <AppContent />
     </MapProviderWrapper>
   );
 }
