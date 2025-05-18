@@ -32,8 +32,7 @@ export default function App() {
       // Replace with actual configuration for your GeminiLiveApi
       // TODO: Replace these placeholder values with your actual configuration
       const PROXY_URL = "ws://localhost:8080"; // Example: Your backend proxy to Gemini
-      const PROJECT_ID = "consumer-genai-experiments";
-      // const PROJECT_ID = "cloud-llm-preview1";
+      const PROJECT_ID = "";
       const MODEL_NAME = "gemini-2.0-flash-live-preview-04-09"; // Or your specific model, e.g., gemini-pro-vision
       const API_HOST = "us-central1-aiplatform.googleapis.com"; // Or your specific region
 
@@ -178,18 +177,18 @@ export default function App() {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
       const recognition = new SpeechRecognition();
-      recognition.lang = 'zh-CN';
+      recognition.lang = 'en-US';
       recognition.continuous = false;
       recognition.interimResults = false;
 
       recognition.onresult = (event) => {
         const text = event.results[0][0].transcript;
-        alert(`设置目的地: ${text}`);
+        alert(`set destination: ${text}`);
       };
 
       recognition.onerror = (event) => {
-        console.error('语音识别错误:', event.error);
-        alert('语音识别失败，请重试');
+        console.error('speech recognition error:', event.error);
+        alert('speech recognition error, please try again.');
       };
 
       recognition.start();
@@ -328,7 +327,7 @@ export default function App() {
               aria-pressed={isStreaming}
               disabled={!geminiApi} // Disable if API not ready
             >
-              {isStreaming ? "停止实时流" : "开始实时流"}
+              {isStreaming ? "Stop Streaming" : "Start Streaming"}
             </button>
 
             <button
@@ -336,7 +335,7 @@ export default function App() {
               onClick={() => setIsGuidanceActive(!isGuidanceActive)}
               aria-pressed={isGuidanceActive}
             >
-              {isGuidanceActive ? "关闭导航模式" : "启用导航模式"}
+              {isGuidanceActive ? "Stop Navigation" : "Start Navigation"}
             </button>
 
             <div 
@@ -344,18 +343,18 @@ export default function App() {
               aria-live="polite"
               className="p-4 bg-gray-800 rounded-lg"
             >
-              {!geminiApi && <p>正在初始化 API...</p>}
-              {geminiApi && !isStreaming && <p>实时流已停止。点击开始。</p>}
-              {isStreaming && !isApiConnected && <p>摄像头已启动，正在连接 Gemini API...</p>}
-              {isStreaming && isApiConnected && <p>实时流已连接并正在发送至 Gemini。</p>}
-              {isGuidanceActive && <p>导航模式已激活</p>}
+              {!geminiApi && <p>Initializing API...</p>}
+              {geminiApi && !isStreaming && <p>Streaming stopped。click to start。</p>}
+              {isStreaming && !isApiConnected && <p>Camera started, connecting to Gemini API...</p>}
+              {isStreaming && isApiConnected && <p>Streaming to Gemini。</p>}
+              {isGuidanceActive && <p>Navigation started</p>}
             </div>
 
             <button
               className="w-full min-h-[3.5rem] p-4 bg-purple-600 rounded-lg text-lg font-bold focus:ring-4 focus:ring-purple-400 active:bg-purple-700 transition-colors touch-manipulation"
               onClick={startVoiceInput}
             >
-              <span role="img" aria-hidden="true">🎤</span> 语音输入目的地
+              <span role="img" aria-hidden="true">🎤</span> Say Destination 
             </button>
           </div>
 
@@ -381,14 +380,14 @@ export default function App() {
             onClick={() => setActiveTab('controls')}
           >
             <span className="text-2xl">🎛️</span>
-            <span className="ml-2">控制台</span>
+            <span className="ml-2">Control</span>
           </button>
           <button
             className={`flex-1 h-full flex items-center justify-center ${activeTab === 'map' ? 'text-blue-500' : 'text-gray-400'}`}
             onClick={() => setActiveTab('map')}
           >
             <span className="text-2xl">🗺️</span>
-            <span className="ml-2">地图</span>
+            <span className="ml-2">Map</span>
           </button>
         </div>
       </div>

@@ -19,7 +19,8 @@ interface MapContextType {
 const MapContext = createContext<MapContextType | undefined>(undefined);
 
 export function MapProviderWrapper({ children }: { children: ReactNode }) {
-  const [provider, setProvider] = useState<MapProvider>(MapProvider.OPENSTREETMAP);
+  // const [provider, setProvider] = useState<MapProvider>(MapProvider.OPENSTREETMAP);
+  const [provider, setProvider] = useState<MapProvider>(MapProvider.GOOGLE);
   const [destination, setDestination] = useState<[number, number] | null>(null);
   const [currentLocation, setCurrentLocation] = useState<[number, number]>([40.7580, -73.9855]);
   const [isNavigating, setIsNavigating] = useState(false);
