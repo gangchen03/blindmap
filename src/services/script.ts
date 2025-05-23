@@ -79,11 +79,7 @@ interface MdInputElement extends HTMLInputElement { value: string; } // For elem
 
 // For local testing
 const PROXY_URL: string = "ws://localhost:8080";
-const PROJECT_ID: string = "consumer-genai-experiments";
-
-// Cloud Run Deploy
-// const PROXY_URL = "/ws";  // cloud run deployment
-// const PROJECT_ID = "gchen-sandbox";
+const PROJECT_ID: string = "";
 
 // const MODEL = "gemini-2.0-flash-exp";
 const MODEL: string = "gemini-2.0-flash-live-preview-04-09";
